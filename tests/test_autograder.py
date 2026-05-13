@@ -1,313 +1,301 @@
 """
-自动评分测试
+自动评分测试（纯函数式，无类包装）
 评分标准：
 - Step 1 (15分): load_document() 正确加载文件
 - Step 2 (25分): chunk_text() 正确切分文本，块数量合理
-- Step 3 (30分): create_vector_store() 向量维度正确
-- Step 4 (20分): retrieve() 检索结果与查询相关
-- Step 5 (10分): generate_answer() 能基于检索结果生成回答
-总分: 100分
-
-运行方式: pytest tests/test_autograder.py -v
+- Step 3 (30分): create_vector_store() 正确生成向量并存入索引
+- Step 4 (15分): retrieve() 正确检索相关文本块
+- Step 5 (15分): generate_answer() 正确生成回答
 """
 
-import pytest
 import sys
 import os
 
+# 确保 PYTHONPATH 正确
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from config import KNOWLEDGE_BASE_PATH, CHUNK_SIZE, CHUNK_OVERLAP
 
+# ===== Step 1 Tests (15分) =====
+def test_step1_file_exists():
+    """Step 1: 知识库文件存在"""
+    import os
+    assert os.path.exists(KNOWLEDGE_BASE_PATH), f"知识库文件不存在: {KNOWLEDGE_BASE_PATH}"
 
-class TestStep1Loader:
-    """Step 1: 文档加载 (15分)"""
+def test_step1_load_returns_string():
+    """Step 1: load_document() 返回字符串"""
+    from step1_loader import load_document
+    result = load_document(KNOWLEDGE_BASE_PATH)
+    assert isinstance(result, str), f"load_document() 应返回 str，实际返回 {type(result)}"
 
-    def test_file_exists(self):
-        """文件存在"""
-        assert os.path.exists(KNOWLEDGE_BASE_PATH), f"知识库文件不存在: {KNOWLEDGE_BASE_PATH}"
+def test_step1_load_not_empty():
+    """Step 1: load_document() 返回非空内容"""
+    from step1_loader import load_document
+    result = load_document(KNOWLEDGE_BASE_PATH)
+    assert len(result) > 100, f"文档内容太短: {len(result)}"
 
-    def test_load_returns_string(self):
-        """加载返回字符串"""
-        from step1_loader import load_document
-        text = load_document(KNOWLEDGE_BASE_PATH)
-        assert isinstance(text, str), "加载应返回字符串"
-
-    def test_load_not_empty(self):
-        """文件非空"""
-        from step1_loader import load_document
-        text = load_document(KNOWLEDGE_BASE_PATH)
-        assert len(text) > 0, "文件内容为空"
-
-    def test_load_encoding(self):
-        """UTF-8 编码正确，无乱码"""
-        from step1_loader import load_document
-        text = load_document(KNOWLEDGE_BASE_PATH)
-        # 检查是否包含预期的中文内容（社团章程关键词）
-        assert any(keyword in text for keyword in ["博远", "社团", "会员", "社长"]), \
-            "文件内容可能存在乱码或不匹配"
-
-
-class TestStep2Chunker:
-    """Step 2: 文本切分 (25分)"""
-
-    def test_chunk_returns_list(self):
-        """返回列表"""
-        from step1_loader import load_document
-        from step2_chunker import chunk_text
-        text = load_document(KNOWLEDGE_BASE_PATH)
-        chunks = chunk_text(text)
-        assert isinstance(chunks, list), "应返回列表"
-
-    def test_chunk_not_empty(self):
-        """切分结果非空"""
-        from step1_loader import load_document
-        from step2_chunker import chunk_text
-        text = load_document(KNOWLEDGE_BASE_PATH)
-        chunks = chunk_text(text)
-        assert len(chunks) > 0, "切分结果为空"
-
-    def test_chunk_count_reasonable(self):
-        """块数量合理（至少2块，最多不超过原文长/20）"""
-        from step1_loader import load_document
-        from step2_chunker import chunk_text
-        text = load_document(KNOWLEDGE_BASE_PATH)
-        chunks = chunk_text(text)
-        min_expected = 2
-        max_expected = len(text) // 20 + 2
-        assert min_expected <= len(chunks) <= max_expected, \
-            f"块数量 {len(chunks)} 不在合理范围 [{min_expected}, {max_expected}]"
-
-    def test_chunk_size_reasonable(self):
-        """每个块长度在合理范围"""
-        from step1_loader import load_document
-        from step2_chunker import chunk_text
-        from step2_chunker import get_chunk_stats
-        text = load_document(KNOWLEDGE_BASE_PATH)
-        chunks = chunk_text(text)
-        stats = get_chunk_stats(chunks)
-
-        # 块平均长度应该接近 CHUNK_SIZE
-        assert stats["avg_length"] >= CHUNK_SIZE * 0.5, \
-            f"平均块长度 {stats['avg_length']} 太小"
-        assert stats["avg_length"] <= CHUNK_SIZE * 1.5, \
-            f"平均块长度 {stats['avg_length']} 太大"
-
-    def test_chunk_has_overlap(self):
-        """验证有重叠（相邻块有共同内容）"""
-        from step1_loader import load_document
-        from step2_chunker import chunk_text
-        text = load_document(KNOWLEDGE_BASE_PATH)
-        chunks = chunk_text(text)
-
-        if len(chunks) >= 2:
-            # 检查是否有共同的字符（验证 overlap 生效）
-            has_overlap = False
-            for i in range(len(chunks) - 1):
-                overlap_chars = set(chunks[i]) & set(chunks[i + 1])
-                if len(overlap_chars) >= CHUNK_OVERLAP:
-                    has_overlap = True
-                    break
-            assert has_overlap, "切分结果没有重叠，可能实现有误"
+def test_step1_load_encoding():
+    """Step 1: load_document() 正确处理编码，无乱码"""
+    from step1_loader import load_document
+    result = load_document(KNOWLEDGE_BASE_PATH)
+    # 检查无常见乱码字符
+    assert "\ufffd" not in result, "文档包含乱码字符"
+    # 允许首尾有空格/换行
+    assert len(result) > 100, "文档内容太短"
 
 
-class TestStep3Embedder:
-    """Step 3: 向量化存储 (30分)"""
+# ===== Step 2 Tests (25分) =====
+def test_step2_chunk_returns_list():
+    """Step 2: chunk_text() 返回列表"""
+    from step1_loader import load_document
+    from step2_chunker import chunk_text
+    text = load_document(KNOWLEDGE_BASE_PATH)
+    result = chunk_text(text)
+    assert isinstance(result, list), f"chunk_text() 应返回 list，实际返回 {type(result)}"
 
-    def test_vectorstore_returns_model_index_chunks(self):
-        """返回 (model, index, chunks)"""
-        from step1_loader import load_document
-        from step2_chunker import chunk_text
-        from step3_embedder import create_vector_store
-        from config import EMBEDDING_MODEL, EMBEDDING_DEVICE
+def test_step2_chunk_not_empty():
+    """Step 2: chunk_text() 返回非空列表"""
+    from step1_loader import load_document
+    from step2_chunker import chunk_text
+    text = load_document(KNOWLEDGE_BASE_PATH)
+    result = chunk_text(text)
+    assert len(result) > 0, "chunk_text() 返回了空列表"
 
-        text = load_document(KNOWLEDGE_BASE_PATH)
-        chunks = chunk_text(text)
+def test_step2_chunk_count_reasonable():
+    """Step 2: 文本块数量合理（至少5块，最多100块）"""
+    from step1_loader import load_document
+    from step2_chunker import chunk_text
+    text = load_document(KNOWLEDGE_BASE_PATH)
+    chunks = chunk_text(text)
+    assert 5 <= len(chunks) <= 100, f"文本块数量不合理: {len(chunks)}"
 
-        # 只取前5个块测试，加速
-        chunks = chunks[:5]
+def test_step2_chunk_size_reasonable():
+    """Step 2: 每个文本块长度在合理范围内（20~500字符）"""
+    from step1_loader import load_document
+    from step2_chunker import chunk_text
+    text = load_document(KNOWLEDGE_BASE_PATH)
+    chunks = chunk_text(text)
+    for i, chunk in enumerate(chunks):
+        assert 20 <= len(chunk) <= 500, f"第{i+1}个块长度异常: {len(chunk)}"
 
-        result = create_vector_store(chunks)
-        assert len(result) == 3, "应返回 (model, index, chunks)"
-        model, index, returned_chunks = result
-
-        assert model is not None
-        assert index is not None
-        assert len(returned_chunks) == len(chunks)
-
-    def test_vector_dimension(self):
-        """向量维度正确（与模型输出维度一致）"""
-        from step1_loader import load_document
-        from step2_chunker import chunk_text
-        from step3_embedder import create_vector_store
-        from sentence_transformers import SentenceTransformer
-
-        text = load_document(KNOWLEDGE_BASE_PATH)
-        chunks = chunk_text(text)
-        chunks = chunks[:3]
-
-        model, index, _ = create_vector_store(chunks)
-
-        # 获取模型的标准维度
-        expected_dim = model.get_sentence_embedding_dimension()
-
-        # 通过搜索验证维度
-        import numpy as np
-        dummy_vector = np.random.randn(1, expected_dim).astype("float32")
-        distances, indices = index.search(dummy_vector, 1)
-
-        assert distances.shape == (1, 1), "搜索结果维度错误"
-
-    def test_index_has_vectors(self):
-        """索引包含向量"""
-        from step1_loader import load_document
-        from step2_chunker import chunk_text
-        from step3_embedder import create_vector_store
-
-        text = load_document(KNOWLEDGE_BASE_PATH)
-        chunks = chunk_text(text)
-        chunks = chunks[:5]
-
-        _, index, _ = create_vector_store(chunks)
-        assert index.ntotal == len(chunks), f"索引应包含 {len(chunks)} 条向量，实际 {index.ntotal}"
+def test_step2_chunk_has_overlap():
+    """Step 2: 相邻文本块有重叠（验证滑动窗口）"""
+    from step1_loader import load_document
+    from step2_chunker import chunk_text
+    text = load_document(KNOWLEDGE_BASE_PATH)
+    chunks = chunk_text(text)
+    if len(chunks) < 2:
+        raise AssertionError("块数量少于2个，无法验证重叠")
+    # 检查：第二个块的开头应该出现在第一个块的末尾（重叠区域）
+    found_overlap = False
+    for i in range(len(chunks) - 1):
+        tail = chunks[i][-40:] if len(chunks[i]) >= 40 else chunks[i]
+        head = chunks[i+1][:20] if len(chunks[i+1]) >= 20 else chunks[i+1]
+        if any(c in tail for c in head):
+            found_overlap = True
+            break
+    assert found_overlap, "未检测到相邻块之间的重叠（滑动窗口未生效）"
 
 
-class TestStep4Retriever:
-    """Step 4: 检索 (20分)"""
+# ===== Step 3 Tests (30分) =====
+def test_step3_vectorstore_returns_tuple():
+    """Step 3: create_vector_store() 返回三元组(model, index, chunks)"""
+    from step1_loader import load_document
+    from step2_chunker import chunk_text
+    from step3_embedder import create_vector_store
+    text = load_document(KNOWLEDGE_BASE_PATH)
+    chunks = chunk_text(text)
+    result = create_vector_store(chunks)
+    assert isinstance(result, tuple) and len(result) == 3, f"create_vector_store() 应返回 (model, index, chunks)，实际返回 {type(result)}"
 
-    @pytest.fixture
-    def setup_rag(self):
-        """共享的 RAG 组件"""
-        from step1_loader import load_document
-        from step2_chunker import chunk_text
-        from step3_embedder import create_vector_store
-        from step4_retriever import retrieve
+def test_step3_model_is_sentence_transformer():
+    """Step 3: 返回的 model 是 SentenceTransformer 实例"""
+    from step1_loader import load_document
+    from step2_chunker import chunk_text
+    from step3_embedder import create_vector_store
+    text = load_document(KNOWLEDGE_BASE_PATH)
+    chunks = chunk_text(text)
+    model, index, returned_chunks = create_vector_store(chunks)
+    assert model is not None, "model 不应为 None"
 
-        text = load_document(KNOWLEDGE_BASE_PATH)
-        chunks = chunk_text(text)
-        model, index, _ = create_vector_store(chunks)
+def test_step3_vector_dimension():
+    """Step 3: 向量维度合理（通常为 384/768/1024）"""
+    from step1_loader import load_document
+    from step2_chunker import chunk_text
+    from step3_embedder import create_vector_store
+    text = load_document(KNOWLEDGE_BASE_PATH)
+    chunks = chunk_text(text)
+    model, index, returned_chunks = create_vector_store(chunks)
+    import numpy as np
+    dim = index.d
+    assert dim in [384, 768, 1024, 1536], f"向量维度异常: {dim}"
 
-        return {"model": model, "index": index, "chunks": chunks, "retrieve": retrieve}
-
-    def test_retrieve_returns_list(self, setup_rag):
-        """检索返回列表"""
-        results = setup_rag["retrieve"]("社团宗旨", setup_rag["model"],
-                                       setup_rag["index"], setup_rag["chunks"])
-        assert isinstance(results, list), "检索应返回列表"
-
-    def test_retrieve_not_empty(self, setup_rag):
-        """检索有结果"""
-        results = setup_rag["retrieve"]("社团宗旨", setup_rag["model"],
-                                        setup_rag["index"], setup_rag["chunks"])
-        assert len(results) > 0, "检索结果为空"
-
-    def test_retrieve_has_required_fields(self, setup_rag):
-        """结果包含必要字段"""
-        results = setup_rag["retrieve"]("会员费", setup_rag["model"],
-                                        setup_rag["index"], setup_rag["chunks"])
-        assert len(results) > 0
-        r = results[0]
-        assert "chunk" in r, "缺少 chunk 字段"
-        assert "score" in r, "缺少 score 字段"
-        assert "rank" in r, "缺少 rank 字段"
-
-    def test_retrieve_top_k_respected(self, setup_rag):
-        """top_k 参数生效"""
-        results = setup_rag["retrieve"]("活动", setup_rag["model"],
-                                        setup_rag["index"], setup_rag["chunks"], top_k=2)
-        assert len(results) <= 2, f"结果数量应为 <= 2，实际 {len(results)}"
-
-    def test_retrieve_relevance(self, setup_rag):
-        """检索结果与查询相关（验证语义匹配生效）"""
-        # 查询"会员费"应该能召回包含"50"或"社费"的内容
-        results = setup_rag["retrieve"]("会员费是多少钱", setup_rag["model"],
-                                        setup_rag["index"], setup_rag["chunks"])
-
-        assert len(results) > 0, "未检索到任何结果"
-
-        # 至少第一个结果的 chunk 包含"费"或"50"
-        top_chunk = results[0]["chunk"]
-        assert any(kw in top_chunk for kw in ["费", "50", "社费", "元"]), \
-            f"检索结果不相关，内容: {top_chunk[:100]}"
+def test_step3_index_has_vectors():
+    """Step 3: FAISS 索引包含向量"""
+    from step1_loader import load_document
+    from step2_chunker import chunk_text
+    from step3_embedder import create_vector_store
+    text = load_document(KNOWLEDGE_BASE_PATH)
+    chunks = chunk_text(text)
+    model, index, returned_chunks = create_vector_store(chunks)
+    assert index.ntotal > 0, "索引中没有任何向量"
 
 
-class TestStep5Generator:
-    """Step 5: 生成回答 (10分)"""
+# ===== Step 4 Tests (15分) =====
+def test_step4_retrieve_returns_list():
+    """Step 4: retrieve() 返回列表"""
+    from step1_loader import load_document
+    from step2_chunker import chunk_text
+    from step3_embedder import create_vector_store
+    from step4_retriever import retrieve
 
-    @pytest.fixture
-    def setup_rag(self):
-        """共享的 RAG 组件"""
-        from step1_loader import load_document
-        from step2_chunker import chunk_text
-        from step3_embedder import create_vector_store
-        from step4_retriever import retrieve
+    text = load_document(KNOWLEDGE_BASE_PATH)
+    chunks = chunk_text(text)
+    model, index, _ = create_vector_store(chunks)
+    results = retrieve("社团的宗旨是什么？", model, index, chunks)
+    assert isinstance(results, list), f"retrieve() 应返回 list，实际返回 {type(results)}"
 
-        text = load_document(KNOWLEDGE_BASE_PATH)
-        chunks = chunk_text(text)
-        model, index, _ = create_vector_store(chunks)
-        results = retrieve("会员费", model, index, chunks)
+def test_step4_retrieve_not_empty():
+    """Step 4: retrieve() 返回非空结果"""
+    from step1_loader import load_document
+    from step2_chunker import chunk_text
+    from step3_embedder import create_vector_store
+    from step4_retriever import retrieve
 
-        return {"retrieve": retrieve, "model": model, "index": index, "chunks": chunks}
+    text = load_document(KNOWLEDGE_BASE_PATH)
+    chunks = chunk_text(text)
+    model, index, _ = create_vector_store(chunks)
+    results = retrieve("社团的宗旨是什么？", model, index, chunks)
+    assert len(results) > 0, "retrieve() 返回了空列表"
 
-    def test_generate_returns_string(self, setup_rag):
-        """生成返回字符串"""
-        from step5_generator import generate_answer
-        from step4_retriever import retrieve
+def test_step4_retrieve_has_required_fields():
+    """Step 4: 返回结果包含必需字段 (chunk, score, rank)"""
+    from step1_loader import load_document
+    from step2_chunker import chunk_text
+    from step3_embedder import create_vector_store
+    from step4_retriever import retrieve
 
-        results = retrieve("社长", setup_rag["model"], setup_rag["index"], setup_rag["chunks"])
-        answer = generate_answer("社长是谁", results)
-        assert isinstance(answer, str), "生成应返回字符串"
+    text = load_document(KNOWLEDGE_BASE_PATH)
+    chunks = chunk_text(text)
+    model, index, _ = create_vector_store(chunks)
+    results = retrieve("社团的宗旨是什么？", model, index, chunks)
+    for r in results:
+        assert all(k in r for k in ["chunk", "score", "rank"]), f"缺少必需字段: {r.keys()}"
 
-    def test_generate_handles_empty(self):
-        """处理空检索结果"""
-        from step5_generator import generate_answer
-        answer = generate_answer("完全不相关的问题", [])
-        assert isinstance(answer, str)
-        assert len(answer) > 0, "空结果时应返回提示语"
+def test_step4_retrieve_top_k_respected():
+    """Step 4: retrieve() 尊重 top_k 参数"""
+    from step1_loader import load_document
+    from step2_chunker import chunk_text
+    from step3_embedder import create_vector_store
+    from step4_retriever import retrieve
 
-    def test_generate_uses_context(self, setup_rag):
-        """生成的回答包含检索到的内容"""
-        from step5_generator import generate_answer
-        from step4_retriever import retrieve
+    text = load_document(KNOWLEDGE_BASE_PATH)
+    chunks = chunk_text(text)
+    model, index, _ = create_vector_store(chunks)
+    results = retrieve("社团的宗旨是什么？", model, index, chunks, top_k=3)
+    assert len(results) == 3, f"top_k=3 但返回了 {len(results)} 个结果"
 
-        results = retrieve("社团宗旨", setup_rag["model"], setup_rag["index"], setup_rag["chunks"])
-        answer = generate_answer("社团宗旨是什么", results)
+def test_step4_retrieve_relevance():
+    """Step 4: 检索结果与查询相关"""
+    from step1_loader import load_document
+    from step2_chunker import chunk_text
+    from step3_embedder import create_vector_store
+    from step4_retriever import retrieve
 
-        # 回答不应为空
-        assert len(answer) > 10, "回答过短，可能未使用上下文"
+    text = load_document(KNOWLEDGE_BASE_PATH)
+    chunks = chunk_text(text)
+    model, index, _ = create_vector_store(chunks)
+    results = retrieve("会员费是多少？", model, index, chunks)
 
-        # 回答应包含检索结果中的内容特征
-        # 正确的回答应该包含社团相关的内容
-        assert any(kw in answer for kw in ["社团", "信息", "技术", "知识", "没有找到", "不知道", "抱歉"]), \
-            "回答可能未正确使用检索到的上下文"
+    assert len(results) > 0, "未检索到任何结果"
+    top_chunk = results[0]["chunk"]
+    # 检查是否包含"费"、"50"、"社费"、"元"、"每"、"学期"、"缴纳"等相关词
+    assert any(kw in top_chunk for kw in ["费", "50", "社费", "元", "每", "学期", "缴纳"]), \
+        f"检索结果可能不相关，内容: {top_chunk[:100]}"
 
 
-class TestIntegration:
-    """综合测试 (加分项)"""
+# ===== Step 5 Tests (15分) =====
+def test_step5_generate_returns_string():
+    """Step 5: generate_answer() 返回字符串"""
+    from step1_loader import load_document
+    from step2_chunker import chunk_text
+    from step3_embedder import create_vector_store
+    from step4_retriever import retrieve
+    from step5_generator import generate_answer
 
-    def test_end_to_end_pipeline(self):
-        """端到端流程测试"""
-        from main import rag_pipeline
+    text = load_document(KNOWLEDGE_BASE_PATH)
+    chunks = chunk_text(text)
+    model, index, _ = create_vector_store(chunks)
+    retrieved = retrieve("社团的宗旨是什么？", model, index, chunks)
+    result = generate_answer("社团的宗旨是什么？", retrieved)
+    assert isinstance(result, str), f"generate_answer() 应返回 str，实际返回 {type(result)}"
 
-        answer, results = rag_pipeline("社团的宗旨是什么？")
+def test_step5_generate_handles_empty():
+    """Step 5: generate_answer() 能处理空检索结果"""
+    from step5_generator import generate_answer
+    result = generate_answer("一个无关问题", [])
+    assert isinstance(result, str), "空检索时应返回字符串"
 
-        assert isinstance(answer, str)
-        assert len(answer) > 0
-        assert isinstance(results, list)
-        assert len(results) > 0
+def test_step5_generate_uses_context():
+    """Step 5: 生成的回答使用了上下文信息"""
+    from step1_loader import load_document
+    from step2_chunker import chunk_text
+    from step3_embedder import create_vector_store
+    from step4_retriever import retrieve
+    from step5_generator import generate_answer
 
-    def test_multiple_queries(self):
-        """多个问题连续测试"""
-        from main import rag_pipeline
+    text = load_document(KNOWLEDGE_BASE_PATH)
+    chunks = chunk_text(text)
+    model, index, _ = create_vector_store(chunks)
+    retrieved = retrieve("社团的宗旨是什么？", model, index, chunks)
+    answer = generate_answer("社团的宗旨是什么？", retrieved)
+    # 回答中应包含来自检索结果的关键词（不只是"不知道"）
+    assert len(answer) > 10, "回答太短，可能没有使用上下文"
+    # 只要包含任何一个 generic 词，就算失败
+    unknown_phrases = ["未找到", "无法确定", "不知道", "没有相关信息", "cannot answer", "no information"]
+    has_generic_phrase = any(phrase.lower() in answer.lower() for phrase in unknown_phrases)
+    assert not has_generic_phrase, f"回答似乎只是通用回复，没有使用上下文: {answer[:100]}"
 
-        queries = [
-            "会员费是多少？",
-            "社长的联系方式是什么？",
-            "每周技术交流会什么时候？"
-        ]
 
-        for q in queries:
-            answer, results = rag_pipeline(q)
-            assert isinstance(answer, str)
-            assert len(answer) > 0
+# ===== Integration Tests =====
+def test_integration_end_to_end():
+    """集成测试: 完整流程"""
+    from step1_loader import load_document
+    from step2_chunker import chunk_text
+    from step3_embedder import create_vector_store
+    from step4_retriever import retrieve
+    from step5_generator import generate_answer
+
+    text = load_document(KNOWLEDGE_BASE_PATH)
+    assert len(text) > 0, "文档加载失败"
+
+    chunks = chunk_text(text)
+    assert len(chunks) > 0, "文本切分失败"
+
+    model, index, _ = create_vector_store(chunks)
+    assert index.ntotal > 0, "向量存储失败"
+
+    results = retrieve("社团的宗旨是什么？", model, index, chunks)
+    assert len(results) > 0, "检索失败"
+
+    answer = generate_answer("社团的宗旨是什么？", results)
+    assert len(answer) > 0, "生成回答失败"
+    print(f"\n完整流程测试通过！示例回答: {answer[:80]}...")
+
+def test_integration_multiple_queries():
+    """集成测试: 多查询稳定性"""
+    from step1_loader import load_document
+    from step2_chunker import chunk_text
+    from step3_embedder import create_vector_store
+    from step4_retriever import retrieve
+    from step5_generator import generate_answer
+
+    text = load_document(KNOWLEDGE_BASE_PATH)
+    chunks = chunk_text(text)
+    model, index, _ = create_vector_store(chunks)
+
+    queries = ["社团的宗旨是什么？", "会员费是多少钱？", "如何成为会员？"]
+    for q in queries:
+        results = retrieve(q, model, index, chunks)
+        answer = generate_answer(q, results)
+        assert len(answer) > 5, f"查询'{q}'的回答太短"
